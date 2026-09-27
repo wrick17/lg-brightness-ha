@@ -1,0 +1,38 @@
+# Add these blocks to configuration.yaml for a new installation.
+# Keep existing UI helpers and template fans when upgrading an installation.
+input_select:
+  lg_g5_energy_saver_homekit:
+    name: LG G5 Energy Saver
+    options:
+      - "Off"
+      - Minimum
+      - Medium
+      - Maximum
+      - Auto
+    icon: mdi:leaf
+    # Leave initial unset so Home Assistant restores the last selection.
+
+template:
+  - fan:
+      - name: LG G5 Energy Saver Slider
+        state: "{{ not is_state('input_select.lg_g5_energy_saver_homekit', 'Off') }}"
+        percentage: "{{ {'Off': 0, 'Minimum': 25, 'Medium': 50, 'Maximum': 75, 'Auto': 100}.get(states('input_select.lg_g5_energy_saver_homekit'), 0) }}"
+        speed_count: 4
+        turn_on:
+          action: input_select.select_option
+          target:
+            entity_id: input_select.lg_g5_energy_saver_homekit
+          data:
+            option: Minimum
+        turn_off:
+          action: input_select.select_option
+          target:
+            entity_id: input_select.lg_g5_energy_saver_homekit
+          data:
+            option: "Off"
+        set_percentage:
+          action: input_select.select_option
+          target:
+            entity_id: input_select.lg_g5_energy_saver_homekit
+          data:
+            option: "{% set p = percentage | int %}{{ 'Off' if p == 0 else 'Minimum' if p <= 25 else 'Medium' if p <= 50 else 'Maximum' if p <= 75 else 'Auto' }}"

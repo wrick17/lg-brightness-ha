@@ -1,0 +1,105 @@
+diff --git a/custom_components/webostv/__init__.py b/custom_components/webostv/__init__.py
+index b62d7b8..13cba6b 100644
+--- a/custom_components/webostv/__init__.py
++++ b/custom_components/webostv/__init__.py
+@@ -3,10 +3,13 @@
+ from __future__ import annotations
+ 
+ from contextlib import suppress
++from functools import partial
++from urllib.parse import urlparse
+ 
+ from aiowebostv import WebOsClient, WebOsTvPairError
+ 
+ from homeassistant.components import notify as hass_notify
++from homeassistant.components import ssdp
+ from homeassistant.const import (
+     ATTR_CONFIG_ENTRY_ID,
+     CONF_CLIENT_SECRET,
+@@ -15,16 +18,65 @@ from homeassistant.const import (
+     EVENT_HOMEASSISTANT_STOP,
+     Platform,
+ )
+-from homeassistant.core import Event, HomeAssistant
++from homeassistant.core import Event, HomeAssistant, callback
+ from homeassistant.exceptions import ConfigEntryAuthFailed
+ from homeassistant.helpers import config_validation as cv, discovery
+ from homeassistant.helpers.aiohttp_client import async_get_clientsession
++from homeassistant.helpers.service_info.ssdp import ATTR_UPNP_UDN, SsdpServiceInfo
+ from homeassistant.helpers.typing import ConfigType
+ 
+ from .const import DATA_HASS_CONFIG, DOMAIN, PLATFORMS, WEBOSTV_EXCEPTIONS
+ from .helpers import WebOsTvConfigEntry, update_client_key
+ 
+ CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
++WEBOSTV_SSDP_ST = "urn:lge-com:service:webos-second-screen:1"
++
++
++@callback
++def _update_host_from_ssdp(
++    hass: HomeAssistant,
++    entry: WebOsTvConfigEntry,
++    discovery_info: SsdpServiceInfo,
++    change: ssdp.SsdpChange,
++) -> None:
++    """Update a moved TV's host from SSDP."""
++    if (
++        change is ssdp.SsdpChange.BYEBYE
++        or discovery_info.ssdp_st != WEBOSTV_SSDP_ST
++        or not discovery_info.ssdp_location
++    ):
++        return
++
++    uuid = discovery_info.upnp.get(ATTR_UPNP_UDN)
++    try:
++        host = urlparse(discovery_info.ssdp_location).hostname
++    except ValueError:
++        return
++    if (
++        not isinstance(uuid, str)
++        or uuid.removeprefix("uuid:") != entry.unique_id
++        or not host
++        or host == entry.data[CONF_HOST]
++    ):
++        return
++
++    hass.config_entries.async_update_entry(
++        entry, data={**entry.data, CONF_HOST: host}
++    )
++    hass.config_entries.async_schedule_reload(entry.entry_id)
++
++
++async def _async_register_ssdp_callback(
++    hass: HomeAssistant, entry: WebOsTvConfigEntry
++) -> None:
++    """Listen for this TV at a new SSDP location."""
++    entry.async_on_unload(
++        await ssdp.async_register_callback(
++            hass,
++            partial(_update_host_from_ssdp, hass, entry),
++            {"st": WEBOSTV_SSDP_ST},
++        )
++    )
+ 
+ 
+ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
+@@ -78,6 +130,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: WebOsTvConfigEntry) -> b
+     entry.async_on_unload(
+         hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STOP, async_on_stop)
+     )
++    await _async_register_ssdp_callback(hass, entry)
+     return True
+ 
+ 
+diff --git a/custom_components/webostv/manifest.json b/custom_components/webostv/manifest.json
+index 330dc6e..2d285c9 100644
+--- a/custom_components/webostv/manifest.json
++++ b/custom_components/webostv/manifest.json
+@@ -3,6 +3,7 @@
+   "name": "LG webOS TV",
+   "codeowners": ["@thecode"],
+   "config_flow": true,
++  "dependencies": ["ssdp"],
+   "documentation": "https://www.home-assistant.io/integrations/webostv",
+   "integration_type": "device",
+   "iot_class": "local_push",

@@ -1,0 +1,295 @@
+- id: lg_g5_energy_saver_home_control
+  alias: LG G5 Energy Saver Home Control
+  description: Apply and verify the requested LG G5 energy-saver setting through the
+    TV's alert API.
+  triggers:
+  - trigger: state
+    entity_id:
+    - input_select.lg_g5_energy_saver_homekit
+    for:
+      milliseconds: 200
+    id: helper
+  - trigger: state
+    entity_id:
+    - media_player.lg_tv
+    not_to:
+    - 'off'
+    - unavailable
+    - unknown
+    for: 00:00:03
+    id: tv_recovered
+  - trigger: homeassistant
+    event: start
+    id: ha_start
+  - trigger: time_pattern
+    minutes: /1
+    id: reconcile
+  conditions: []
+  actions:
+  - variables:
+      tv_entity: media_player.lg_tv
+      helper_entity: input_select.lg_g5_energy_saver_homekit
+      desired_lookup:
+        'Off': 'off'
+        Minimum: min
+        Medium: med
+        Maximum: max
+        Auto: auto
+      label_lookup:
+        'off': 'Off'
+        min: Minimum
+        med: Medium
+        max: Maximum
+        auto: Auto
+      desired_label: '{{ states(''input_select.lg_g5_energy_saver_homekit'') }}'
+  - variables:
+      target_value: '{{ desired_lookup.get(desired_label) }}'
+  - condition: or
+    conditions:
+    - condition: not
+      conditions:
+      - condition: trigger
+        id: reconcile
+    - condition: template
+      value_template: "{{ states(tv_entity) not in ['off', 'unknown', 'unavailable'] }}"
+  - choose:
+    - conditions:
+      - condition: template
+        value_template: '{{ target_value is none or states(tv_entity) in [''off'',
+          ''unknown'', ''unavailable''] }}'
+      sequence:
+      - action: persistent_notification.create
+        data:
+          notification_id: lg_g5_energy_saver
+          title: LG G5 energy saver not applied
+          message: Home Assistant could not apply {{ desired_label }} because the
+            TV is unavailable or the requested value is invalid.
+      - stop: LG G5 unavailable or requested value invalid
+  - repeat:
+      sequence:
+      - variables:
+          initial_read_response: {}
+      - action: webostv.command
+        continue_on_error: true
+        target:
+          entity_id: media_player.lg_tv
+        data:
+          command: settings/getSystemSettings
+          payload:
+            category: picture
+            keys:
+            - energySaving
+        response_variable: initial_read_response
+      - variables:
+          initial_read_result: '{{ (initial_read_response | default({}, true)).get(tv_entity,
+            {}) }}'
+      - variables:
+          actual_value: '{{ initial_read_result.get(''settings'', {}).get(''energySaving'')
+            if initial_read_result.get(''returnValue'') == true else none }}'
+          actual_label: '{{ label_lookup.get(initial_read_result.get(''settings'',
+            {}).get(''energySaving'')) if initial_read_result.get(''returnValue'')
+            == true else none }}'
+      - choose:
+        - conditions:
+          - condition: template
+            value_template: '{{ actual_label is none and repeat.index < 3 }}'
+          sequence:
+          - delay:
+              seconds: 2
+      until:
+      - condition: template
+        value_template: '{{ actual_label is not none or repeat.index >= 3 }}'
+  - choose:
+    - conditions:
+      - condition: template
+        value_template: '{{ actual_label is none }}'
+      sequence:
+      - action: persistent_notification.create
+        data:
+          notification_id: lg_g5_energy_saver
+          title: LG G5 energy saver not applied
+          message: Home Assistant could not read a valid Energy Saving value from
+            the TV. The Apple Home slider remains at {{ desired_label }}.
+      - stop: LG G5 returned an invalid Energy Saving readback
+    - conditions:
+      - condition: template
+        value_template: '{{ actual_value == target_value }}'
+      sequence:
+      - action: persistent_notification.dismiss
+        continue_on_error: true
+        data:
+          notification_id: lg_g5_energy_saver
+      - stop: LG G5 Energy Saving already matches the Apple Home slider
+  - repeat:
+      sequence:
+      - variables:
+          create_response: {}
+      - action: webostv.command
+        continue_on_error: true
+        target:
+          entity_id: media_player.lg_tv
+        data:
+          command: system.notifications/createAlert
+          payload:
+            message: ' '
+            buttons:
+            - label: ''
+              onClick: luna://com.webos.settingsservice/setSystemSettings
+              params:
+                category: picture
+                settings:
+                  energySaving: '{{ target_value }}'
+            onclose:
+              uri: luna://com.webos.settingsservice/setSystemSettings
+              params:
+                category: picture
+                settings:
+                  energySaving: '{{ target_value }}'
+            onfail:
+              uri: luna://com.webos.settingsservice/setSystemSettings
+              params:
+                category: picture
+                settings:
+                  energySaving: '{{ target_value }}'
+        response_variable: create_response
+      - variables:
+          create_result: '{{ (create_response | default({}, true)).get(tv_entity,
+            {}) }}'
+      - variables:
+          alert_id: '{{ create_result.get(''alertId'') }}'
+          create_ok: '{{ create_result.get(''returnValue'') == true and create_result.get(''alertId'')
+            is string and create_result.get(''alertId'') | length > 0 }}'
+      - choose:
+        - conditions:
+          - condition: template
+            value_template: '{{ not create_ok }}'
+          sequence:
+          - action: persistent_notification.create
+            data:
+              notification_id: lg_g5_energy_saver
+              title: LG G5 energy saver not applied
+              message: The TV rejected the Energy Saving request for {{ desired_label
+                }} before it could be applied. Home Assistant will retry while the TV is on.
+          - stop: LG G5 returned an invalid createAlert response
+      - variables:
+          close_response: {}
+      - action: webostv.command
+        continue_on_error: true
+        target:
+          entity_id: media_player.lg_tv
+        data:
+          command: system.notifications/closeAlert
+          payload:
+            alertId: '{{ alert_id }}'
+        response_variable: close_response
+      - variables:
+          close_result: '{{ (close_response | default({}, true)).get(tv_entity, {})
+            }}'
+      - variables:
+          close_ok: '{{ close_result.get(''returnValue'') == true }}'
+      - choose:
+        - conditions:
+          - condition: template
+            value_template: '{{ not close_ok }}'
+          sequence:
+          - action: persistent_notification.create
+            data:
+              notification_id: lg_g5_energy_saver
+              title: LG G5 energy saver not applied
+              message: The TV did not confirm the Energy Saving request for {{ desired_label
+                }}. Home Assistant will retry while the TV is on.
+          - stop: LG G5 returned an invalid closeAlert response
+      - delay:
+          seconds: 1
+      - variables:
+          verify_response: {}
+      - action: webostv.command
+        continue_on_error: true
+        target:
+          entity_id: media_player.lg_tv
+        data:
+          command: settings/getSystemSettings
+          payload:
+            category: picture
+            keys:
+            - energySaving
+        response_variable: verify_response
+      - variables:
+          verify_result: '{{ (verify_response | default({}, true)).get(tv_entity,
+            {}) }}'
+      - variables:
+          actual_value: '{{ verify_result.get(''settings'', {}).get(''energySaving'')
+            if verify_result.get(''returnValue'') == true else none }}'
+          actual_label: '{{ label_lookup.get(verify_result.get(''settings'', {}).get(''energySaving''))
+            if verify_result.get(''returnValue'') == true else none }}'
+      - choose:
+        - conditions:
+          - condition: template
+            value_template: '{{ actual_label is none }}'
+          sequence:
+          - action: persistent_notification.create
+            data:
+              notification_id: lg_g5_energy_saver
+              title: LG G5 energy saver could not be verified
+              message: The TV did not return a valid Energy Saving value after the
+                request for {{ desired_label }}. The Apple Home slider remains unchanged.
+          - stop: LG G5 returned an invalid verification readback
+      until:
+      - condition: template
+        value_template: '{{ actual_value == target_value or repeat.index >= 2 }}'
+  - variables:
+      final_read_response: {}
+  - action: webostv.command
+    continue_on_error: true
+    target:
+      entity_id: media_player.lg_tv
+    data:
+      command: settings/getSystemSettings
+      payload:
+        category: picture
+        keys:
+        - energySaving
+    response_variable: final_read_response
+  - variables:
+      final_read_result: '{{ (final_read_response | default({}, true)).get(tv_entity,
+        {}) }}'
+  - variables:
+      actual_value: '{{ final_read_result.get(''settings'', {}).get(''energySaving'')
+        if final_read_result.get(''returnValue'') == true else none }}'
+      actual_label: '{{ label_lookup.get(final_read_result.get(''settings'', {}).get(''energySaving''))
+        if final_read_result.get(''returnValue'') == true else none }}'
+  - choose:
+    - conditions:
+      - condition: template
+        value_template: '{{ actual_label is none }}'
+      sequence:
+      - action: persistent_notification.create
+        data:
+          notification_id: lg_g5_energy_saver
+          title: LG G5 energy saver could not be verified
+          message: The TV did not return a valid final Energy Saving value after the
+            request for {{ desired_label }}. The Apple Home slider remains unchanged.
+      - stop: LG G5 returned an invalid final readback
+  - choose:
+    - conditions:
+      - condition: template
+        value_template: '{{ actual_value == target_value }}'
+      sequence:
+      - action: persistent_notification.dismiss
+        continue_on_error: true
+        data:
+          notification_id: lg_g5_energy_saver
+    - conditions:
+      - condition: template
+        value_template: '{{ actual_label is not none }}'
+      sequence:
+      - action: persistent_notification.create
+        data:
+          notification_id: lg_g5_energy_saver
+          title: LG G5 energy saver did not change
+          message: The TV stayed at {{ actual_label }} after two verified attempts
+            to apply {{ desired_label }}. The Apple Home slider remains at {{
+            states(helper_entity) }}; Home Assistant will retry while the TV is on.
+  mode: queued
+  max: 2
+  max_exceeded: silent
