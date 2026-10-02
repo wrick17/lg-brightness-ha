@@ -27,7 +27,7 @@ The setter uses `system.notifications/createAlert` with a fixed `luna://com.webo
 
 ## Verify
 
-Run these checks with Python from a Home Assistant 2026.1.3 installation. The SSDP and connection tests take the patched checkout directory as their final argument:
+Run these checks with Python from a Home Assistant 2026.1.3 installation. The SSDP and connection tests take the override checkout directory as their final argument:
 
 ```sh
 python3 tests/test_configuration.py configuration.example.yaml
