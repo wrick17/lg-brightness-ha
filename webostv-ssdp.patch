@@ -1,22 +1,23 @@
 diff --git a/custom_components/webostv/__init__.py b/custom_components/webostv/__init__.py
-index b62d7b8..13cba6b 100644
+index b62d7b8..ad83cf8 100644
 --- a/custom_components/webostv/__init__.py
 +++ b/custom_components/webostv/__init__.py
 @@ -3,10 +3,13 @@
  from __future__ import annotations
- 
+
  from contextlib import suppress
 +from functools import partial
 +from urllib.parse import urlparse
- 
- from aiowebostv import WebOsClient, WebOsTvPairError
- 
+
+-from aiowebostv import WebOsClient, WebOsTvPairError
++from aiowebostv import WebOsTvPairError
+
  from homeassistant.components import notify as hass_notify
 +from homeassistant.components import ssdp
  from homeassistant.const import (
      ATTR_CONFIG_ENTRY_ID,
      CONF_CLIENT_SECRET,
-@@ -15,16 +18,65 @@ from homeassistant.const import (
+@@ -15,16 +18,66 @@ from homeassistant.const import (
      EVENT_HOMEASSISTANT_STOP,
      Platform,
  )
@@ -27,10 +28,11 @@ index b62d7b8..13cba6b 100644
  from homeassistant.helpers.aiohttp_client import async_get_clientsession
 +from homeassistant.helpers.service_info.ssdp import ATTR_UPNP_UDN, SsdpServiceInfo
  from homeassistant.helpers.typing import ConfigType
- 
+
++from .client import WebOsClient
  from .const import DATA_HASS_CONFIG, DOMAIN, PLATFORMS, WEBOSTV_EXCEPTIONS
  from .helpers import WebOsTvConfigEntry, update_client_key
- 
+
  CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 +WEBOSTV_SSDP_ST = "urn:lge-com:service:webos-second-screen:1"
 +
@@ -80,17 +82,65 @@ index b62d7b8..13cba6b 100644
 +            {"st": WEBOSTV_SSDP_ST},
 +        )
 +    )
- 
- 
+
+
  async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
-@@ -78,6 +130,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: WebOsTvConfigEntry) -> b
+@@ -78,6 +131,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: WebOsTvConfigEntry) -> b
      entry.async_on_unload(
          hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STOP, async_on_stop)
      )
 +    await _async_register_ssdp_callback(hass, entry)
      return True
- 
- 
+
+
+diff --git a/custom_components/webostv/client.py b/custom_components/webostv/client.py
+new file mode 100644
+index 0000000..8912f0b
+--- /dev/null
++++ b/custom_components/webostv/client.py
+@@ -0,0 +1,21 @@
++"""Connection fallback for the pinned unsigned webOS client."""
++
++import aiohttp
++from aiowebostv import WebOsClient as BaseWebOsClient
++from aiowebostv.webos_client import MAIN_WS_MAX_MSG_SIZE, WS_PORT, WSS_PORT
++
++
++class WebOsClient(BaseWebOsClient):
++    """Try the secure port when the plain port rejects or times out."""
++
++    async def _create_main_ws(self) -> aiohttp.ClientWebSocketResponse:
++        try:
++            return await self._ws_connect(
++                f"ws://{self.host}:{WS_PORT}", MAIN_WS_MAX_MSG_SIZE
++            )
++        except (
++            TimeoutError, aiohttp.ClientConnectionError, aiohttp.WSServerHandshakeError
++        ):
++            return await self._ws_connect(
++                f"wss://{self.host}:{WSS_PORT}", MAIN_WS_MAX_MSG_SIZE
++            )
+diff --git a/custom_components/webostv/config_flow.py b/custom_components/webostv/config_flow.py
+index 44711c2..c37994d 100644
+--- a/custom_components/webostv/config_flow.py
++++ b/custom_components/webostv/config_flow.py
+@@ -6,7 +6,7 @@ from collections.abc import Mapping
+ from typing import Any, Self
+ from urllib.parse import urlparse
+
+-from aiowebostv import WebOsClient, WebOsTvPairError
++from aiowebostv import WebOsTvPairError
+ import voluptuous as vol
+
+ from homeassistant.config_entries import (
+@@ -25,6 +25,7 @@ from homeassistant.helpers.service_info.ssdp import (
+ )
+
+ from . import WebOsTvConfigEntry
++from .client import WebOsClient
+ from .const import CONF_SOURCES, DEFAULT_NAME, DOMAIN, WEBOSTV_EXCEPTIONS
+ from .helpers import get_sources
+
 diff --git a/custom_components/webostv/manifest.json b/custom_components/webostv/manifest.json
 index 330dc6e..2d285c9 100644
 --- a/custom_components/webostv/manifest.json
