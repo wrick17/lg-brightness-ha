@@ -8,31 +8,31 @@ input_select:
       - Minimum
       - Medium
       - Maximum
-      - Auto
     icon: mdi:leaf
     # Leave initial unset so Home Assistant restores the last selection.
 
 template:
   - fan:
       - name: LG G5 Energy Saver Slider
-        state: "{{ not is_state('input_select.lg_g5_energy_saver_homekit', 'Off') }}"
-        percentage: "{{ {'Off': 0, 'Minimum': 25, 'Medium': 50, 'Maximum': 75, 'Auto': 100}.get(states('input_select.lg_g5_energy_saver_homekit'), 0) }}"
-        speed_count: 4
+        # Inverted: 100% is Energy Saving Off (brightest), 0% and fan off are Maximum.
+        state: "{{ not is_state('input_select.lg_g5_energy_saver_homekit', 'Maximum') }}"
+        percentage: "{{ {'Maximum': 0, 'Medium': 33, 'Minimum': 66, 'Off': 100}.get(states('input_select.lg_g5_energy_saver_homekit'), 0) }}"
+        speed_count: 3
         turn_on:
           action: input_select.select_option
           target:
             entity_id: input_select.lg_g5_energy_saver_homekit
           data:
-            option: Minimum
+            option: Medium
         turn_off:
           action: input_select.select_option
           target:
             entity_id: input_select.lg_g5_energy_saver_homekit
           data:
-            option: "Off"
+            option: Maximum
         set_percentage:
           action: input_select.select_option
           target:
             entity_id: input_select.lg_g5_energy_saver_homekit
           data:
-            option: "{% set p = percentage | int %}{{ 'Off' if p == 0 else 'Minimum' if p <= 25 else 'Medium' if p <= 50 else 'Maximum' if p <= 75 else 'Auto' }}"
+            option: "{% set p = percentage | int %}{{ 'Maximum' if p == 0 else 'Medium' if p < 50 else 'Minimum' if p < 83 else 'Off' }}"

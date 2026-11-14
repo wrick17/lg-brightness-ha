@@ -48,7 +48,7 @@ async def scenario(actions, *, initial, desired, trigger, fail_create=0, fail_cr
                 if change_helper:
                     hass.states.async_set(HELPER, change_helper)
                 if apply:
-                    physical = {"Off": "off", "Minimum": "min", "Medium": "med", "Maximum": "max", "Auto": "auto"}[desired]
+                    physical = {"Off": "off", "Minimum": "min", "Medium": "med", "Maximum": "max"}[desired]
                 return {TV: {"returnValue": True}}
             raise AssertionError(name)
 
@@ -103,6 +103,10 @@ async def main(path):
     assert (physical, helper) == ("min", "Medium")
     assert calls.count("system.notifications/createAlert") == 2
     assert calls.count("system.notifications/closeAlert") == 1
+
+    # Auto is no longer selectable; a TV left in Auto returns to the slider value.
+    physical, helper, calls, notices = await scenario(actions, initial="auto", desired="Maximum", trigger="reconcile")
+    assert (physical, helper) == ("max", "Maximum"), (physical, helper, calls, notices)
 
     # A reconciled TV needs only one read, no setter or helper write.
     physical, helper, calls, notices = await scenario(actions, initial="med", desired="Medium", trigger="reconcile")

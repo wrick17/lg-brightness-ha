@@ -34,7 +34,7 @@
         Minimum: min
         Medium: med
         Maximum: max
-        Auto: auto
+      # Auto stays readable so reconciliation can move a TV set to Auto by remote.
       label_lookup:
         'off': 'Off'
         min: Minimum
